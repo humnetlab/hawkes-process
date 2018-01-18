@@ -88,133 +88,134 @@ class MPHP:
                 return self.data
 
 
-def EM(Ahat, mhat, mhatday, omega, seq=[], a=[1, 1, 1, 1, 1, 5, 5], smx=None, tmx=None, regularize=False,
-       Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
-    '''implements MAP EM. 
-    Optional regularization:
+    def EM(Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
+           Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
+        '''implements MAP EM. 
+        Optional regularization:
 
-    - On excitation matrix Ahat:
-     `smx` and `tmx` matrix (shape=(dim,dim)).
-    In general, the `tmx` matrix is a pseudocount of parent events from column j,
-    and the `smx` matrix is a pseudocount of child events from column j -> i, 
-    however, for more details/usage see https://stmorse.github.io/docs/orc-thesis.pdf
+        - On excitation matrix Ahat:
+         `smx` and `tmx` matrix (shape=(dim,dim)).
+        In general, the `tmx` matrix is a pseudocount of parent events from column j,
+        and the `smx` matrix is a pseudocount of child events from column j -> i, 
+        however, for more details/usage see https://stmorse.github.io/docs/orc-thesis.pdf
 
-    - On day of week parameter mhatday:
-    a[i] is a pseudocount of events on the ith day of the week
-    '''
+        - On day of week parameter mhatday:
+        a[i] is a pseudocount of events on the ith day of the week
 
-    # if no sequence passed, uses class instance data
-    if len(seq) == 0:
-        seq = data
+        '''
 
-    N = len(seq)
-    day = (np.floor(seq[:, 0]) % 7).astype(int)
-    dim = mhat.shape[0]
-    Tm = float(seq[-1, 0]) if Tm < 0 else float(Tm)
-    sequ = seq[:, 1].astype(int)
+        # if no sequence passed, uses class instance data
+        if len(seq) == 0:
+            seq = data
 
-    p_ii = np.random.uniform(0.01, 0.99, size=N)
-    p_ij = np.random.uniform(0.01, 0.99, size=(N, N))
+        N = len(seq)
+        day = (np.floor(seq[:, 0]) % 7).astype(int)
+        dim = mhat.shape[0]
+        Tm = float(seq[-1, 0]) if Tm < 0 else float(Tm)
+        sequ = seq[:, 1].astype(int)
 
-    # PRECOMPUTATIONS
+        p_ii = np.random.uniform(0.01, 0.99, size=N)
+        p_ij = np.random.uniform(0.01, 0.99, size=(N, N))
 
-    # diffs[i,j] = t_i - t_j for j < i (o.w. zero)
-    diffs = pairwise_distances(np.array([seq[:, 0]]).T, metric='euclidean')
-    diffs[np.triu_indices(N)] = 0
+        # PRECOMPUTATIONS
 
-    # kern[i,j] = omega*np.exp(-omega*diffs[i,j])
-    kern = omega * np.exp(-omega * diffs)
+        # diffs[i,j] = t_i - t_j for j < i (o.w. zero)
+        diffs = pairwise_distances(np.array([seq[:, 0]]).T, metric='euclidean')
+        diffs[np.triu_indices(N)] = 0
 
-    colidx = np.tile(sequ.reshape((1, N)), (N, 1))
-    rowidx = np.tile(sequ.reshape((N, 1)), (1, N))
+        # kern[i,j] = omega*np.exp(-omega*diffs[i,j])
+        kern = omega * np.exp(-omega * diffs)
 
-    # approx of Gt sum in a_{uu'} denom **
-    seqcnts = np.array([len(np.where(sequ == i)[0]) for i in range(dim)])
-    seqcnts = np.tile(seqcnts, (dim, 1))
+        colidx = np.tile(sequ.reshape((1, N)), (N, 1))
+        rowidx = np.tile(sequ.reshape((N, 1)), (1, N))
 
-    # returns sum of all pmat vals where u_i=a, u_j=b
-    # *IF* pmat upper tri set to zero, this is
-    # \sum_{u_i=u}\sum_{u_j=u', j<i} p_{ij}
-    def sum_pij(a, b):
-        c = cartesian([np.where(seq[:, 1] == int(a))[0], np.where(seq[:, 1] == int(b))[0]])
-        return np.sum(p_ij[c[:, 0], c[:, 1]])
-    vp = np.vectorize(sum_pij)
+        # approx of Gt sum in a_{uu'} denom **
+        seqcnts = np.array([len(np.where(sequ == i)[0]) for i in range(dim)])
+        seqcnts = np.tile(seqcnts, (dim, 1))
 
-    # \int_0^t g(t') dt' with g(t)=we^{-wt}
-    # def G(t): return 1 - np.exp(-omega * t)
-    #   vg = np.vectorize(G)
-    # Gdenom = np.array([np.sum(vg(diffs[-1,np.where(seq[:,1]==i)])) for i in range(dim)])
+        # returns sum of all pmat vals where u_i=a, u_j=b
+        # *IF* pmat upper tri set to zero, this is
+        # \sum_{u_i=u}\sum_{u_j=u', j<i} p_{ij}
+        def sum_pij(a, b):
+            c = cartesian([np.where(seq[:, 1] == int(a))[0], np.where(seq[:, 1] == int(b))[0]])
+            return np.sum(p_ij[c[:, 0], c[:, 1]])
+        vp = np.vectorize(sum_pij)
 
-    k = 0
-    old_LL = -10000
+        # \int_0^t g(t') dt' with g(t)=we^{-wt}
+        # def G(t): return 1 - np.exp(-omega * t)
+        #   vg = np.vectorize(G)
+        # Gdenom = np.array([np.sum(vg(diffs[-1,np.where(seq[:,1]==i)])) for i in range(dim)])
 
-    while k < maxiter:
-        Auu = Ahat[rowidx, colidx] #ahat[i, j] = a_ui, uj
-        ag = np.multiply(Auu, kern)
-        ag[np.triu_indices(N)] = 0
+        k = 0
+        old_LL = -10000
 
-        # compute m_{u_i}
-        self.mu = mhat[sequ]
+        while k < maxiter:
+            Auu = Ahat[rowidx, colidx] #ahat[i, j] = a_ui, uj
+            ag = np.multiply(Auu, kern)
+            ag[np.triu_indices(N)] = 0
 
-        # compute delta_{d_i}
-        self.mu_day = mhatday[day]
+            # compute m_{u_i}
+            self.mu = mhat[sequ]
 
-        # compute total rates of u_i at time i
-        rates = self.mu*self.mu_day + np.sum(ag, axis=1)
+            # compute delta_{d_i}
+            self.mu_day = mhatday[day]
 
-        # compute matrix of p_ii and p_ij  (keep separate for later computations)
-        p_ij = np.divide(ag, np.tile(np.array([rates]).T, (1, N)))
-        p_ii = np.divide(self.mu, rates)
+            # compute total rates of u_i at time i
+            rates = self.mu*self.mu_day + np.sum(ag, axis=1)
 
-        # compute mhat:  mhat_u = (\sum_{u_i=u} p_ii) / T
-        mhat = np.array([np.sum(p_ii[np.where(seq[:, 1] == i)])
-                         for i in range(dim)]) / Tm
+            # compute matrix of p_ii and p_ij  (keep separate for later computations)
+            p_ij = np.divide(ag, np.tile(np.array([rates]).T, (1, N)))
+            p_ii = np.divide(self.mu, rates)
 
-        mhatday = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + a[i] - 1, 
-                                      np.sum(p_ii)/7 + a[i] - 1) for i in range(7)])
+            # compute mhat:  mhat_u = (\sum_{u_i=u} p_ii) / T
+            mhat = np.array([np.sum(p_ii[np.where(seq[:, 1] == i)])
+                             for i in range(dim)]) / Tm
+
+            mhatday = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + a[i] - 1, 
+                                          np.sum(p_ii)/7 + a[i] - 1) for i in range(7)])
 
 
-        # ahat_{u,u'} = (\sum_{u_i=u}\sum_{u_j=u', j<i} p_ij) / \sum_{u_j=u'} G(T-t_j)
-        # approximate with G(T-T_j) = 1
-        if regularize:
-            Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (dim, dim)) + (smx - 1),
-                             seqcnts + tmx)
-        else:
-            Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (dim, dim)),
-                             seqcnts)
+            # ahat_{u,u'} = (\sum_{u_i=u}\sum_{u_j=u', j<i} p_ij) / \sum_{u_j=u'} G(T-t_j)
+            # approximate with G(T-T_j) = 1
+            if regularize:
+                Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (dim, dim)) + (smx - 1),
+                                 seqcnts + tmx)
+            else:
+                Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (dim, dim)),
+                                 seqcnts)
 
-        if k % 10 == 0:
-            try:
-                term1 = np.sum(np.log(rates))
-            except:
-                print('Log error!')
-            term2 = Tm * np.sum(mhat)
-            term3 = np.sum(np.sum(Ahat[u, int(seq[j, 1])] for j in range(N)) for u in range(dim))
-            #new_LL = (1./N) * (term1 - term2 - term3)
-            new_LL = (1. / N) * (term1 - term3)
-            if abs(new_LL - old_LL) <= epsilon:
+            if k % 10 == 0:
+                try:
+                    term1 = np.sum(np.log(rates))
+                except:
+                    print('Log error!')
+                term2 = Tm * np.sum(mhat)
+                term3 = np.sum(np.sum(Ahat[u, int(seq[j, 1])] for j in range(N)) for u in range(dim))
+                #new_LL = (1./N) * (term1 - term2 - term3)
+                new_LL = (1. / N) * (term1 - term3)
+                if abs(new_LL - old_LL) <= epsilon:
+                    if verbose:
+                        print('Reached stopping criterion. (Old: %1.3f New: %1.3f)' % (old_LL, new_LL))
+                        self.alpha = Ahat
+                        self.mu = mhat
+                        self.mu_day = mhatday
+                    return Ahat, mhat, mhatday
                 if verbose:
-                    print('Reached stopping criterion. (Old: %1.3f New: %1.3f)' % (old_LL, new_LL))
-                    self.alpha = Ahat
-                    self.mu = mhat
-                    self.mu_day = mhatday
-                return Ahat, mhat, mhatday
-            if verbose:
-                print('After ITER %d (old: %1.3f new: %1.3f)' % (k, old_LL, new_LL))
-                print(' terms %1.4f, %1.4f, %1.4f' % (term1, term2, term3))
+                    print('After ITER %d (old: %1.3f new: %1.3f)' % (k, old_LL, new_LL))
+                    print(' terms %1.4f, %1.4f, %1.4f' % (term1, term2, term3))
 
-            old_LL = new_LL
+                old_LL = new_LL
 
-        k += 1
+            k += 1
 
-    if verbose:
-        print('Reached max iter (%d).' % maxiter)
+        if verbose:
+            print('Reached max iter (%d).' % maxiter)
 
-    self.alpha = Ahat
-    self.mu = mhat
-    self.mu_day = mhatday
-    return Ahat, mhat, mhatday
- 
+        self.alpha = Ahat
+        self.mu = mhat
+        self.mu_day = mhatday
+        return Ahat, mhat, mhatday
+     
 
 # VISUALIZATION METHODS
 
