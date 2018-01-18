@@ -54,7 +54,6 @@ class MPHP:
         last_rates = self.mu * self.mu_day[day]
         last_day = day
 
-            
         while True:
 
             tj, uj = self.data[-1][0], int(self.data[-1][1])
@@ -91,10 +90,18 @@ class MPHP:
 
 def EM(Ahat, mhat, mhatday, omega, seq=[], a=[1, 1, 1, 1, 1, 5, 5], smx=None, tmx=None, regularize=False,
        Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
-    '''implements MAP EM. Optional to regularize with `smx` and `tmx` matrix (shape=(dim,dim)).
+    '''implements MAP EM. 
+    Optional regularization:
+
+    - On excitation matrix Ahat:
+     `smx` and `tmx` matrix (shape=(dim,dim)).
     In general, the `tmx` matrix is a pseudocount of parent events from column j,
     and the `smx` matrix is a pseudocount of child events from column j -> i, 
-    however, for more details/usage see https://stmorse.github.io/docs/orc-thesis.pdf'''
+    however, for more details/usage see https://stmorse.github.io/docs/orc-thesis.pdf
+
+    - On day of week parameter mhatday:
+    a[i] is a pseudocount of events on the ith day of the week
+    '''
 
     # if no sequence passed, uses class instance data
     if len(seq) == 0:
