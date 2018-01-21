@@ -45,34 +45,34 @@ class MHP:
 
         self.data = []  # clear history
 
-        Istar = np.sum(self.mu)
-        s = np.random.exponential(scale=1./Istar)
+        M = np.sum(self.mu)
+        s = np.random.exponential(scale=1./M)
 
-        # attribute (weighted random sample, since sum(mu)==Istar)
+        # attribute (weighted random sample, since sum(mu)==M)
         n0 = np.random.choice(np.arange(self.dim), 
                               1, 
-                              p=(self.mu / Istar))
+                              p=(self.mu / M))
         self.data.append([s, n0])
 
         # value of \lambda(t_k) where k is most recent event
         # starts with just the base rate
         lastrates = self.mu.copy()
 
-        decIstar = False
+        decM = False
         while True:
             tj, uj = self.data[-1][0], int(self.data[-1][1])
 
-            if decIstar:
-                # if last event was rejected, decrease Istar
-                Istar = np.sum(rates)
-                decIstar = False
+            if decM:
+                # if last event was rejected, decrease M
+                M = np.sum(rates)
+                decM = False
             else:
-                # otherwise, we just had an event, so recalc Istar (inclusive of last event)
-                Istar = np.sum(lastrates) + \
+                # otherwise, we just had an event, so recalc M (inclusive of last event)
+                M = np.sum(lastrates) + \
                         self.omega * np.sum(self.alpha[:,uj])
 
             # generate new event
-            s += np.random.exponential(scale=1./Istar)
+            s += np.random.exponential(scale=1./M)
 
             # calc rates at time s (use trick to take advantage of rates at last event)
             rates = self.mu + np.exp(-self.omega * (s - tj)) * \
@@ -80,10 +80,10 @@ class MHP:
 
             # attribution/rejection test
             # handle attribution and thinning in one step as weighted random sample
-            diff = Istar - np.sum(rates)
+            diff = M - np.sum(rates)
             try:
                 n0 = np.random.choice(np.arange(self.dim+1), 1, 
-                                      p=(np.append(rates, diff) / Istar))
+                                      p=(np.append(rates, diff) / M))
             except ValueError:
                 # by construction this should not happen
                 print('Probabilities do not sum to one.')
@@ -95,7 +95,7 @@ class MHP:
                 # update lastrates
                 lastrates = rates.copy()
             else:
-                decIstar = True
+                decM = True
 
             # if past horizon, done
             if s >= horizon:

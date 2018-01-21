@@ -60,12 +60,11 @@ class MPHP:
             tj, uj = self.data[-1][0], int(self.data[-1][1])
             
             if event_rejected:
-                M = mu_day_max / self.mu_day[last_day] * np.sum(rates)
+                M = np.sum(rates) + np.sum(self.mu) * (mu_day_max - self.mu_day[day])
                 event_rejected = False
 
-            else:
-            # recalculate M inclusive of last event
-            M = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
+            else: # recalculate M (inclusive of last event)
+                M = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
 
             # generate new event
             s += np.random.exponential(scale=1. / M)
