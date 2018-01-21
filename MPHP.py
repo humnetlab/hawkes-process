@@ -62,7 +62,8 @@ class MPHP:
             Istar = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
 
             # generate new event
-            s += np.random.exponential(scale=1. / Istar)
+            delta = np.random.exponential(scale=1. / Istar)
+            s += delta
             day = int(np.floor(s) % 7)
 
             # calc rates at time s (use trick to take advantage of rates at last event)
@@ -80,6 +81,8 @@ class MPHP:
                 self.data.append([s, event_type])
                 last_day = day
                 last_rates = rates.copy()
+            else:
+                s -= delta
 
             # if past horizon, done
             if s >= horizon:
@@ -88,7 +91,7 @@ class MPHP:
                 return self.data
 
 
-    def EM(Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
+    def EM(self, Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
            Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
         '''implements MAP EM. 
         Optional regularization:
@@ -106,11 +109,11 @@ class MPHP:
 
         # if no sequence passed, uses class instance data
         if len(seq) == 0:
-            seq = data
+            seq = self.data
 
         N = len(seq)
         day = (np.floor(seq[:, 0]) % 7).astype(int)
-        dim = mhat.shape[0]
+        self.dim = mhat.shape[0]
         Tm = float(seq[-1, 0]) if Tm < 0 else float(Tm)
         sequ = seq[:, 1].astype(int)
 
@@ -130,8 +133,8 @@ class MPHP:
         rowidx = np.tile(sequ.reshape((N, 1)), (1, N))
 
         # approx of Gt sum in a_{uu'} denom **
-        seqcnts = np.array([len(np.where(sequ == i)[0]) for i in range(dim)])
-        seqcnts = np.tile(seqcnts, (dim, 1))
+        seqcnts = np.array([len(np.where(sequ == i)[0]) for i in range(self.dim)])
+        seqcnts = np.tile(seqcnts, (self.dim, 1))
 
         # returns sum of all pmat vals where u_i=a, u_j=b
         # *IF* pmat upper tri set to zero, this is
@@ -169,7 +172,7 @@ class MPHP:
 
             # compute mhat:  mhat_u = (\sum_{u_i=u} p_ii) / T
             mhat = np.array([np.sum(p_ii[np.where(seq[:, 1] == i)])
-                             for i in range(dim)]) / Tm
+                             for i in range(self.dim)]) / Tm
 
             mhatday = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + a[i] - 1, 
                                           np.sum(p_ii)/7 + a[i] - 1) for i in range(7)])
@@ -178,10 +181,10 @@ class MPHP:
             # ahat_{u,u'} = (\sum_{u_i=u}\sum_{u_j=u', j<i} p_ij) / \sum_{u_j=u'} G(T-t_j)
             # approximate with G(T-T_j) = 1
             if regularize:
-                Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (dim, dim)) + (smx - 1),
+                Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (self.dim, self.dim)) + (smx - 1),
                                  seqcnts + tmx)
             else:
-                Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (dim, dim)),
+                Ahat = np.divide(np.fromfunction(lambda i, j: vp(i, j), (self.dim, self.dim)),
                                  seqcnts)
 
             if k % 10 == 0:
@@ -190,7 +193,7 @@ class MPHP:
                 except:
                     print('Log error!')
                 term2 = Tm * np.sum(mhat)
-                term3 = np.sum(np.sum(Ahat[u, int(seq[j, 1])] for j in range(N)) for u in range(dim))
+                term3 = np.sum(np.sum(Ahat[u, int(seq[j, 1])] for j in range(N)) for u in range(self.dim))
                 #new_LL = (1./N) * (term1 - term2 - term3)
                 new_LL = (1. / N) * (term1 - term3)
                 if abs(new_LL - old_LL) <= epsilon:

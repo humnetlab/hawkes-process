@@ -198,7 +198,11 @@ class MHP:
                 if abs(new_LL - old_LL) <= epsilon:
                     if verbose:
                         print('Reached stopping criterion. (Old: %1.3f New: %1.3f)' % (old_LL, new_LL))
+
+                    self.Ahat = Ahat
+                    self.mhat = mhat
                     return Ahat, mhat
+                    
                 if verbose:
                     print('After ITER %d (old: %1.3f new: %1.3f)' % (k, old_LL, new_LL))
                     print(' terms %1.4f, %1.4f, %1.4f' % (term1, term2, term3))
