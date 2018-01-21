@@ -36,34 +36,39 @@ class MPHP:
         Uses Ogata's thinning method, with some speedups, noted below'''
 
         self.data = []  # clear history
-        Istar = np.sum(self.mu)
+        M = np.sum(self.mu)
         Dstar = np.sum(self.mu_day)
         mu_day_max = np.max(self.mu_day)
 
         while True:
-            s = np.random.exponential(scale=1. / Istar)
+            s = np.random.exponential(scale=1. / M)
             day = int(np.floor(s) % 7)
 
-            # attribute (weighted random sample, since sum(self.mu)==Istar)
+            # attribute (weighted random sample, since sum(self.mu)==M)
             U = np.random.uniform()
             if U <= self.mu_day[day]/Dstar: 
-                event_type = np.random.choice(np.arange(self.dim), 1, p=(self.mu / Istar)) #[0]
+                event_type = np.random.choice(np.arange(self.dim), 1, p=(self.mu / M)) #[0]
                 self.data.append([s, event_type])
                 break
 
         last_rates = self.mu * self.mu_day[day]
         last_day = day
+        event_rejected = False
 
         while True:
 
             tj, uj = self.data[-1][0], int(self.data[-1][1])
             
-            # otherwise, we just had an event, so recalc Istar (inclusive of last event)
-            Istar = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
+            if event_rejected:
+                M = mu_day_max / self.mu_day[last_day] * np.sum(rates)
+                event_rejected = False
+
+            else:
+            # recalculate M inclusive of last event
+            M = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
 
             # generate new event
-            delta = np.random.exponential(scale=1. / Istar)
-            s += delta
+            s += np.random.exponential(scale=1. / M)
             day = int(np.floor(s) % 7)
 
             # calc rates at time s (use trick to take advantage of rates at last event)
@@ -72,17 +77,17 @@ class MPHP:
 
             # attribution/rejection test
             # handle attribution and thinning in one step as weighted random sample
-            diff = Istar - np.sum(rates)
+            diff = M - np.sum(rates)
             
             event_type = np.random.choice(np.arange(self.dim + 1), 1,
-                                      p=(np.append(rates, diff) / Istar))
+                                      p=(np.append(rates, diff) / M))
 
             if event_type < self.dim:
                 self.data.append([s, event_type])
                 last_day = day
                 last_rates = rates.copy()
             else:
-                s -= delta
+                event_rejected = True
 
             # if past horizon, done
             if s >= horizon:
