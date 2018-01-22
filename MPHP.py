@@ -98,6 +98,10 @@ class MPHP:
     def EM(self, Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
            Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
         '''implements MAP EM. 
+        
+        seq[0, :] Time of event in days (float)
+        seq[1, :] Event type, starting from 0
+
         Optional regularization:
 
         - On excitation matrix Ahat:

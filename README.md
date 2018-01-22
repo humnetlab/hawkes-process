@@ -1,4 +1,4 @@
-# Python class for Multivariate Hawkes Processes
+# Multivariate Hawkes Processes with Weekly Periodicity
 
 This repo provides a class `MHP` for doing basic experimentation with a Hawkes process.  It works for both uni- and multivariate processes, and implements both synthetic sequence generation and parameter estimation of a known sequence.  I use a MAP EM algorithm for parameter estimation that is described in [this unpublished report](https://stmorse.github.io/docs/6-867-final-writeup.pdf) for the univariate case, and [my masters thesis](https://stmorse.github.io/docs/orc-thesis.pdf) for the multivariate case.
 
