@@ -31,34 +31,50 @@ class MPHP:
         if me >= 1.:
             print('(WARNING) Unstable.')    
 
-    def generate_seq(self, horizon):
+    def generate_seq(self, horizon, last_rates=[], seq=None):
         '''Generate a sequence based on mu, alpha, omega values. 
-        Uses Ogata's thinning method, with some speedups, noted below'''
+        Uses Ogata's thinning method, with some speedups, noted below
+        
+        horizon: time period for which to simulate (in days)
+        Start simulation from previous history
+            last_rates: list of last rates
+            seq: for last event, np.array([time, event type])
+        '''
 
-        self.data = []  # clear history
-        M = np.sum(self.mu)
-        Dstar = np.sum(self.mu_day)
         mu_day_max = np.max(self.mu_day)
 
-        while True:
-            s = np.random.exponential(scale=1. / M)
-            day = int(np.floor(s) % 7)
+        if len(last_rates) == 0:
+            seq = [] 
+            M = np.sum(self.mu)
+            Dstar = np.sum(self.mu_day)
 
-            # attribute (weighted random sample, since sum(self.mu)==M)
-            U = np.random.uniform()
-            if U <= self.mu_day[day]/Dstar: 
-                event_type = np.random.choice(np.arange(self.dim), 1, p=(self.mu / M)) #[0]
-                self.data.append([s, event_type])
-                break
+            while True:
+                s = np.random.exponential(scale=1. / M)
+                day = int(np.floor(s) % 7)
 
-        last_rates = self.mu * self.mu_day[day]
-        last_day = day
+                # attribute (weighted random sample, since sum(self.mu)==M)
+                U = np.random.uniform()
+                if U <= self.mu_day[day]/Dstar: 
+                    event_type = np.random.choice(np.arange(self.dim), 1, p=(self.mu / M))
+                    seq.append([s, event_type])
+                    break
+
+            last_rates = self.mu * self.mu_day[day]
+            last_day = day
+
+        else:
+            seq = [tuple(seq)]
+            s = seq[0][0]
+            horizon = s + horizon
+            last_rates = np.array(last_rates)
+            last_day = int(np.floor(seq[0][0]) % 7)
+
         event_rejected = False
 
         while True:
 
-            tj, uj = self.data[-1][0], int(self.data[-1][1])
-            
+            tj, uj = seq[-1][0], int(seq[-1][1])
+
             if event_rejected:
                 M = np.sum(rates) + np.sum(self.mu) * (mu_day_max - self.mu_day[day])
                 event_rejected = False
@@ -77,12 +93,12 @@ class MPHP:
             # attribution/rejection test
             # handle attribution and thinning in one step as weighted random sample
             diff = M - np.sum(rates)
-            
+
             event_type = np.random.choice(np.arange(self.dim + 1), 1,
                                       p=(np.append(rates, diff) / M))
 
             if event_type < self.dim:
-                self.data.append([s, event_type])
+                seq.append([s, event_type])
                 last_day = day
                 last_rates = rates.copy()
             else:
@@ -90,9 +106,12 @@ class MPHP:
 
             # if past horizon, done
             if s >= horizon:
-                self.data = np.array(self.data)
-                self.data = self.data[self.data[:, 0] < horizon]
-                return self.data
+                if last_rates.tolist():
+                    seq.pop(0)
+                seq = np.array(seq)
+                seq = seq[seq[:, 0] < horizon]
+
+                return seq
 
 
     def EM(self, Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
@@ -227,14 +246,53 @@ class MPHP:
         return Ahat, mhat, mhatday
      
 
-# VISUALIZATION METHODS
+    def get_ll(self, omega, ahat, mhat, mhatday, seq = [], Tm = 0):
 
-    def get_rate(self, ct, d):
+        if len(seq) == 0:
+            seq = self.data
+        
+        N = len(seq)
+        day = (np.floor(seq[:, 0]) % 7).astype(int)
+        if Tm==0:
+            Tm = np.ceil(seq[-1, 0])
+        sequ = seq[:, 1].astype(int)
+        dim = mhat.shape[0]
+        
+        # diffs[i,j] = t_i - t_j for j < i (o.w. zero)
+        diffs = pairwise_distances(np.array([seq[:, 0]]).T, metric='euclidean')
+        diffs[np.triu_indices(N)] = 0
+
+        # kern[i,j] = omega*np.exp(-omega*diffs[i,j])
+        kern = omega * np.exp(-omega * diffs)
+
+        colidx = np.tile(sequ.reshape((1, N)), (N, 1))
+        rowidx = np.tile(sequ.reshape((N, 1)), (1, N))
+
+        Auu = ahat[rowidx, colidx] 
+        ag = np.multiply(Auu, kern)
+        ag[np.triu_indices(N)] = 0
+
+        # compute total rates of u_i at time i
+        rates = mhat[sequ]*mhatday[day] + np.sum(ag, axis=1)
+
+        term1 = np.sum(np.log(rates))
+        term2 = Tm * np.sum(mhat)
+        term3 = np.sum(np.sum(ahat[u, int(seq[j, 1])] for j in range(N)) for u in range(dim))
+
+        loglik = (1./N) * (term1 - term2 - term3)
+        return loglik
+
+    def get_rate(self, ct, d, seq=None):
         # return rate at time ct in dimension d
-        seq = np.array(self.data)
+        if not seq:
+            seq = np.array(self.data)
+        else:
+            seq = np.array(seq)
         if not np.all(ct > seq[:, 0]):
             seq = seq[seq[:, 0] < ct]
-        return self.mu[d] + \
+
+        day = int(np.floor(ct) % 7)
+        return self.mu[d]*self.mu_day[day] + \
             np.sum([self.alpha[d, int(j)] * self.omega * np.exp(-self.omega * (ct - t)) for t, j in seq])
 
 

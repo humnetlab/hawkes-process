@@ -8,7 +8,7 @@ from sklearn.utils.extmath import cartesian
 import matplotlib.pyplot as plt
 
 
-class MPHP:
+class MDHP:
     '''Multidimensional Periodic Hawkes Process
     Captures rates with periodic component depending on the day of week
 
@@ -31,7 +31,7 @@ class MPHP:
         if me >= 1.:
             print('(WARNING) Unstable.')    
 
-    def generate_seq(self, horizon):
+    def generate_seq_daily_weekly(self, horizon):
         '''Generate a sequence based on mu, alpha, omega values. 
         Uses Ogata's thinning method, with some speedups, noted below'''
 
@@ -103,7 +103,7 @@ class MPHP:
                 return self.data
 
 
-    def EM_daily(self, Ahat, mhat, mhatday, omega, seq=[], day_reg=np.ones(7), hour_reg=np.ones(24),
+    def EM_daily_weekly(self, Ahat, mhat, mhatday, omega, seq=[], day_reg=np.ones(7), hour_reg=np.ones(24),
      smx=None, tmx=None, regularize=False, Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
         '''implements MAP EM. 
         
