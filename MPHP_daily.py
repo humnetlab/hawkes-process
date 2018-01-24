@@ -39,10 +39,12 @@ class MPHP:
         M = np.sum(self.mu)
         Dstar = np.sum(self.mu_day)
         mu_day_max = np.max(self.mu_day)
+        mu_hour_max = np.max(self.mu_hour)
 
         while True:
             s = np.random.exponential(scale=1. / M)
             day = int(np.floor(s) % 7)
+            hour = int(24*(s - day)) 
 
             # attribute (weighted random sample, since sum(self.mu)==M)
             U = np.random.uniform()
@@ -51,8 +53,9 @@ class MPHP:
                 self.data.append([s, event_type])
                 break
 
-        last_rates = self.mu * self.mu_day[day]
+        last_rates = self.mu * self.mu_day[day] * self.mu_hour[hour]
         last_day = day
+        last_hour = hour
         event_rejected = False
 
         while True:
@@ -60,19 +63,23 @@ class MPHP:
             tj, uj = self.data[-1][0], int(self.data[-1][1])
             
             if event_rejected:
-                M = np.sum(rates) + np.sum(self.mu) * (mu_day_max - self.mu_day[day])
+                M = np.sum(rates) + np.sum(self.mu) * \
+                (mu_day_max*mu_hour_max - self.mu_day[day]*self.mu_hour[hour])
                 event_rejected = False
 
             else: # recalculate M (inclusive of last event)
-                M = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
+                M = mu_day_max*mu_hour_max*np.sum(self.mu) + \
+                np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
 
             # generate new event
             s += np.random.exponential(scale=1. / M)
             day = int(np.floor(s) % 7)
+            hour = int(24*(s - day)) 
 
             # calc rates at time s (use trick to take advantage of rates at last event)
-            rates = self.mu*self.mu_day[day] +  np.exp(-self.omega * (s - tj)) * \
-                (self.alpha[:, uj].flatten() * self.omega + last_rates - self.mu*self.mu_day[last_day])
+            rates = self.mu*self.mu_day[day]*self.mu_hour[hour] +  np.exp(-self.omega * (s - tj)) * \
+                (self.alpha[:, uj].flatten() * self.omega + last_rates \
+                    - self.mu*self.mu_day[last_day]*self.mu_hour[last_hour])
 
             # attribution/rejection test
             # handle attribution and thinning in one step as weighted random sample
@@ -84,6 +91,7 @@ class MPHP:
             if event_type < self.dim:
                 self.data.append([s, event_type])
                 last_day = day
+                last_hour = hour
                 last_rates = rates.copy()
             else:
                 event_rejected = True
@@ -95,8 +103,8 @@ class MPHP:
                 return self.data
 
 
-    def EM(self, Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
-           Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
+    def EM_daily(self, Ahat, mhat, mhatday, omega, seq=[], day_reg=np.ones(7), hour_reg=np.ones(24),
+     smx=None, tmx=None, regularize=False, Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
         '''implements MAP EM. 
         
         seq[0, :] Time of event in days (float)
@@ -111,8 +119,8 @@ class MPHP:
         however, for more details/usage see https://stmorse.github.io/docs/orc-thesis.pdf
 
         - On day of week parameter mhatday:
-        a[i] is a pseudocount of events on the ith day of the week
-        a[i] = 1 corresponds to no regularization for ith day
+        day_reg[i] is a pseudocount of events on the ith day of the week
+        Default: day_reg[i] = 1 corresponds to no regularization for ith day
         '''
 
         # if no sequence passed, uses class instance data
@@ -121,6 +129,8 @@ class MPHP:
 
         N = len(seq)
         day = (np.floor(seq[:, 0]) % 7).astype(int)
+        hour = (24*(s - day)).astype(int)
+
         self.dim = mhat.shape[0]
         Tm = float(seq[-1, 0]) if Tm < 0 else float(Tm)
         sequ = seq[:, 1].astype(int)
@@ -170,9 +180,10 @@ class MPHP:
 
             # compute delta_{d_i}
             self.mu_day = mhatday[day]
+            self.mu_hour = mhathour[hour]
 
             # compute rates of u_i at time i for all times i 
-            rates = self.mu*self.mu_day + np.sum(ag, axis=1)
+            rates = self.mu*self.mu_day*self.mu_hour + np.sum(ag, axis=1)
 
             # compute matrix of p_ii and p_ij  (keep separate for later computations)
             p_ij = np.divide(ag, np.tile(np.array([rates]).T, (1, N)))
@@ -182,10 +193,11 @@ class MPHP:
             mhat = np.array([np.sum(p_ii[np.where(seq[:, 1] == i)])
                              for i in range(self.dim)]) / Tm
 
-            mhatday = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + a[i] - 1, 
-                                          np.sum(p_ii)/7 + a[i] - 1) for i in range(7)])
+            mhatday = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + day_reg[i] - 1, 
+                                          np.sum(p_ii)/7 + day_reg[i] - 1) for i in range(7)])
 
-
+            mhathour = np.array([np.divide(np.sum(p_ii[np.where(hour == i)]) + hour_reg[i] - 1, 
+                                          np.sum(p_ii)/24 + hour_reg[i] - 1) for i in range(24)])
             # ahat_{u,u'} = (\sum_{u_i=u}\sum_{u_j=u', j<i} p_ij) / \sum_{u_j=u'} G(T-t_j)
             # approximate with G(T-T_j) = 1
             if regularize:
@@ -209,7 +221,8 @@ class MPHP:
                         self.alpha = Ahat
                         self.mu = mhat
                         self.mu_day = mhatday
-                    return Ahat, mhat, mhatday
+                        self.mu_hour = mhathour
+                    return Ahat, mhat, mhatday, mhathour
                 if verbose:
                     print('After ITER %d (old: %1.3f new: %1.3f)' % (k, old_LL, new_LL))
                     print(' terms %1.4f, %1.4f, %1.4f' % (term1, term2, term3))
@@ -224,7 +237,8 @@ class MPHP:
         self.alpha = Ahat
         self.mu = mhat
         self.mu_day = mhatday
-        return Ahat, mhat, mhatday
+        self.mu_hour = mhathour
+        return Ahat, mhat, mhatday, mhathour
      
 
 # VISUALIZATION METHODS

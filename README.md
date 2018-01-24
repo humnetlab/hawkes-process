@@ -2,13 +2,15 @@
 
 This repo provides a class `MPHP` for estimation of multidimensional Hawkes processes with periodicity depending on the day of week, extending the formulation by Steven Morse found [here](https://github.com/stmorse/hawkes). The `MHP` class fits multidimensional Hawkes processes without periodicity. A comparison of the methods can be found [here](https://github.com/humnetlab/hawkes-process/blob/master/MPHP%20demonstration.ipynb).
 
+Documentation (from [the original repository](https://github.com/stmorse/hawkes)) is below.
+
 # Contents
 
 The `MHP.py` file contains a single class, `MHP`.  The core methods are:
 
 1. `generate_seq`: generates synthetic sequences given parameter values specified in the constructor.  Uses Ogata thinning with two speedups/modifications: it saves the rates at the moment of the last event, and it does the "attribution/rejection" test as a weighted random sample (using NumPy's `random.sample`) instead of, e.g., a for-loop.
 
-2. `EM`: uses a Bayesian EM algorithm to learn parameters, given a sequence and estimates of `alpha`, `mu`, and `omega`.  It treats `omega` as a hyperparameter and does not optimize over this parameter.  For more details see [the report](https://stmorse.github.io/docs/6-867-final-writeup.pdf), [my thesis](https://stmorse.github.io/docs/orc-thesis.pdf), or [this blog post](https://stmorse.github.io/blog).
+2. `EM`: uses a Bayesian EM algorithm to learn parameters, given a sequence and estimates of `alpha`, `mu`, and `omega`.  It treats `omega` as a hyperparameter and does not optimize over this parameter.  For more details see [the report](https://stmorse.github.io/docs/6-867-final-writeup.pdf), [Steve's thesis](https://stmorse.github.io/docs/orc-thesis.pdf), or [this blog post](https://stmorse.github.io/blog).
 
 There are also two visualization methods, `plot_events` (which plots only the time series of events), and `plot_rates` (which plots the time series with the corresponding conditional intensities, currently only implemented for `dim=3`).
 
