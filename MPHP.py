@@ -8,19 +8,20 @@ from sklearn.utils.extmath import cartesian
 import matplotlib.pyplot as plt
 
 
-class MPHP:
+class MPHP2:
     '''Multidimensional Periodic Hawkes Process
     Captures rates with periodic component depending on the day of week
 
     '''
 
-    def __init__(self, alpha=[[0.5]], mu=[0.1], mu_day=np.ones(7), omega=1.0):
+    def __init__(self, alpha=[[0.5]], mu=[0.1], mu_weekend=np.ones(2), mu_dayofweek=None, mu_hour = np.ones(12), omega=1.0):
         '''params should be of form:
         alpha: numpy.array((u,u)), mu: numpy.array((,u)), omega: float'''
 
         self.data = []
-        self.alpha, self.mu, self.mu_day, self.omega = np.array(alpha), np.array(mu), np.array(mu_day), omega
+        self.alpha, self.mu, self.omega = np.array(alpha), np.array(mu), omega
         self.dim = self.mu.shape[0]
+        self.mu_weekend, self.mu_dayofweek, self.mu_hour = np.array(mu_weekend), np.array(mu_dayofweek), np.array(mu_hour)
         self.check_stability()
 
     def check_stability(self):
@@ -31,95 +32,116 @@ class MPHP:
         if me >= 1.:
             print('(WARNING) Unstable.')    
 
-    def generate_seq(self, horizon, last_rates=[], seq=None):
+    def generate_seq(self, window=np.inf, N_events=np.inf, last_rates=[], seq=None):
         '''Generate a sequence based on mu, alpha, omega values. 
-        Uses Ogata's thinning method, with some speedups, noted below
-        
-        horizon: time period for which to simulate (in days)
-        Start simulation from previous history
-            last_rates: list of last rates
-            seq: for last event, np.array([time, event type])
-        '''
+        Uses Ogata's thinning method, with some speedups, noted below'''
 
-        mu_day_max = np.max(self.mu_day)
+        self.data = []  # clear history
+        M = np.sum(self.mu)
+        Dstar = np.sum(self.mu_dayofweek)
+        mu_weekend_max = np.max(self.mu_weekend)
+        mu_day_max = np.max(self.mu_dayofweek)
+        mu_hour_max = np.max(self.mu_hour)
 
-        if len(last_rates) == 0:
-            seq = [] 
-            M = np.sum(self.mu)
-            Dstar = np.sum(self.mu_day)
+        while True:
+            s = np.random.exponential(scale=1. / M)
+            day = int(np.floor(s) % 7)
+            hour = int(24*(s - np.floor(s))) ###THIS IS WRONGGGGGGG
 
-            while True:
-                s = np.random.exponential(scale=1. / M)
-                day = int(np.floor(s) % 7)
+            # attribute (weighted random sample, since sum(self.mu)==M)
+            U = np.random.uniform()
+            if U <= self.mu_dayofweek[day]/Dstar: 
+                event_type = np.random.choice(np.arange(self.dim), 1, p=(self.mu / M)) #[0]
+                self.data.append([s, event_type])
+                break
 
-                # attribute (weighted random sample, since sum(self.mu)==M)
-                U = np.random.uniform()
-                if U <= self.mu_day[day]/Dstar: 
-                    event_type = np.random.choice(np.arange(self.dim), 1, p=(self.mu / M))
-                    seq.append([s, event_type])
-                    break
 
-            last_rates = self.mu * self.mu_day[day]
+        delta = 1
+        if self.mu_dayofweek:
+            delta = delta*self.mu_dayofweek[day]
             last_day = day
+        if self.mu_weekend:
+            delta = delta*self.mu_weekend[weekend]
+            last_weekend = weekend
+        if self.mu_hour:
+            delta = delta*self.mu_hour[hour]
+            last_hour = hour
 
-        else:
-            seq = [tuple(seq)]
-            s = seq[0][0]
-            horizon = s + horizon
-            last_rates = np.array(last_rates)
-            last_day = int(np.floor(seq[0][0]) % 7)
+        last_rates = self.mu * delta
 
         event_rejected = False
 
         while True:
 
-            tj, uj = seq[-1][0], int(seq[-1][1])
-
-            if event_rejected:
-                M = np.sum(rates) + np.sum(self.mu) * (mu_day_max - self.mu_day[day])
-                event_rejected = False
-
-            else: # recalculate M (inclusive of last event)
-                M = mu_day_max*np.sum(self.mu) + np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
+            tj, uj = self.data[-1][0], int(self.data[-1][1])
+            
+            # recalculate M (inclusive of last event)
+            M = mu_day_max*mu_hour_max*np.sum(self.mu) + \
+            np.sum(last_rates) + self.omega * np.sum(self.alpha[:, uj])
 
             # generate new event
             s += np.random.exponential(scale=1. / M)
-            day = int(np.floor(s) % 7)
+
+            if self.mu_dayofweek or self.mu_weekend:
+                day = int(np.floor(s) % 7)
+
+                if self.mu_weekend: #need to start from monday!
+                    weekend = (day > 5).astype(int)
+
+            if self.mu_hour:
+                hour = int(len(self.mu_hour)*(s - np.floor(s)))
+
+            delta = 1
+            last_delta = 1
+            if self.mu_dayofweek:
+                delta = delta*self.mu_day[day]
+                last_delta = last_delta*self.mu_day[day]
+            if self.mu_weekend:
+                delta = delta*self.mu_weekend[weekend]
+                last_delta = last_delta*self.mu_weekend[last_weekend]
+            if self.mu_hour:
+                delta = delta*self.mu_hour[hour]
+                last_delta = last_delta*self.mu_hour[last_hour]
 
             # calc rates at time s (use trick to take advantage of rates at last event)
-            rates = self.mu*self.mu_day[day] +  np.exp(-self.omega * (s - tj)) * \
-                (self.alpha[:, uj].flatten() * self.omega + last_rates - self.mu*self.mu_day[last_day])
+            rates = self.mu*delta +  np.exp(-self.omega * (s - tj)) * \
+                (self.alpha[:, uj].flatten() * self.omega + last_rates \
+                    - self.mu*last_delta)
 
             # attribution/rejection test
             # handle attribution and thinning in one step as weighted random sample
             diff = M - np.sum(rates)
-
+            
             event_type = np.random.choice(np.arange(self.dim + 1), 1,
                                       p=(np.append(rates, diff) / M))
 
             if event_type < self.dim:
-                seq.append([s, event_type])
-                last_day = day
+
+                self.data.append([s, event_type])
                 last_rates = rates.copy()
-            else:
-                event_rejected = True
+
+                if self.mu_dayofweek:
+                    last_day = day
+                if self.mu_weekend:
+                    last_weekend = weekend
+                if self.mu_hour:
+                    last_hour = hour
 
             # if past horizon, done
             if s >= horizon:
-                if last_rates.tolist():
-                    seq.pop(0)
-                seq = np.array(seq)
-                seq = seq[seq[:, 0] < horizon]
-
-                return seq
+                self.data = np.array(self.data)
+                self.data = self.data[self.data[:, 0] < horizon]
+                return self.data
 
 
-    def EM(self, Ahat, mhat, mhatday, omega, seq=[], a=np.ones(7), smx=None, tmx=None, regularize=False,
-           Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
+    def EM(self, Ahat, mhat, omega, seq=[], mhat_weekend=np.ones(2), mhat_dayofweek=None, mhat_hour=np.ones(12), 
+        dayofweek_reg=np.ones(7), hour_reg=np.ones(24), smx=None, tmx=None, regularize=False, Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
         '''implements MAP EM. 
         
         seq[0, :] Time of event in days (float)
         seq[1, :] Event type, indexed 0 to dim-1
+
+        mhat_hour: periodicity within a single day. If len(mhat_hour)=24 this is parametrized hourly, len(mhat_hour)=4 corresponds to five parameters.
 
         Optional regularization:
 
@@ -129,9 +151,9 @@ class MPHP:
         and the `smx` matrix is a pseudocount of child events from column j -> i, 
         however, for more details/usage see https://stmorse.github.io/docs/orc-thesis.pdf
 
-        - On day of week parameter mhatday:
-        a[i] is a pseudocount of events on the ith day of the week
-        a[i] = 1 corresponds to no regularization for ith day
+        - On day of week parameter mhat_dayofweek:
+        dayofweek_reg[i] is a pseudocount of events on the ith day of the week
+        Default: dayofweek_reg[i] = 1 corresponds to no regularization for ith day
         '''
 
         # if no sequence passed, uses class instance data
@@ -139,7 +161,16 @@ class MPHP:
             seq = self.data
 
         N = len(seq)
-        day = (np.floor(seq[:, 0]) % 7).astype(int)
+
+        if mhat_dayofweek or mhat_weekend:
+            day = (np.floor(seq[:, 0]) % 7).astype(int)
+
+            if mhat_weekend: #need to start from monday!
+                weekend = (day > 5).astype(int)
+
+        if mhat_hour:
+            hour = (len(mhat_hour)*(s - np.floor(s))).astype(int) #WRONG s - np.floor(s)
+
         self.dim = mhat.shape[0]
         Tm = float(seq[-1, 0]) if Tm < 0 else float(Tm)
         sequ = seq[:, 1].astype(int)
@@ -188,10 +219,23 @@ class MPHP:
             self.mu = mhat[sequ]
 
             # compute delta_{d_i}
-            self.mu_day = mhatday[day]
+            if mhat_dayofweek:
+                self.mu_day = mhat_dayofweek[day]
+            if mhat_weekend:
+                self.mu_weekend = mhat_weekend[weekend]
+            if mhat_hour:
+                self.mu_hour = mhat_hour[hour]
+
+            delta = 1
+            if mhat_dayofweek:
+                delta = delta*self.mu_day
+            if mhat_weekend:
+                delta = delta*self.mu_weekend
+            if mhat_hour:
+                delta = delta*self.mu_hour
 
             # compute rates of u_i at time i for all times i 
-            rates = self.mu*self.mu_day + np.sum(ag, axis=1)
+            rates = self.mu*delta + np.sum(ag, axis=1)
 
             # compute matrix of p_ii and p_ij  (keep separate for later computations)
             p_ij = np.divide(ag, np.tile(np.array([rates]).T, (1, N)))
@@ -200,9 +244,15 @@ class MPHP:
             # compute mhat:  mhat_u = (\sum_{u_i=u} p_ii) / T
             mhat = np.array([np.sum(p_ii[np.where(seq[:, 1] == i)])
                              for i in range(self.dim)]) / Tm
-
-            mhatday = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + a[i] - 1, 
-                                          np.sum(p_ii)/7 + a[i] - 1) for i in range(7)])
+            if mhat_dayofweek:
+                mhat_dayofweek = np.array([np.divide(np.sum(p_ii[np.where(day == i)]) + dayofweek_reg[i] - 1, 
+                                          np.sum(p_ii)/7 + dayofweek_reg[i] - 1) for i in range(7)])
+            if mhat_weekend:
+                mhat_weekend = np.array([np.divide(np.sum(p_ii[np.where(weekend == i)]) + reg[i] - 1, 
+                              np.sum(p_ii)/7 + reg[i] - 1) for i in range(2)])
+            if mhat_hour:
+                mhat_hour = np.array([np.divide(np.sum(p_ii[np.where(hour == i)]) + hour_reg[i] - 1, 
+                                          np.sum(p_ii)/24 + hour_reg[i] - 1) for i in range(24)])
 
 
             # ahat_{u,u'} = (\sum_{u_i=u}\sum_{u_j=u', j<i} p_ij) / \sum_{u_j=u'} G(T-t_j)
@@ -225,10 +275,25 @@ class MPHP:
                 if abs(new_LL - old_LL) <= epsilon:
                     if verbose:
                         print('Reached stopping criterion. (Old: %1.3f New: %1.3f)' % (old_LL, new_LL))
-                        self.alpha = Ahat
-                        self.mu = mhat
-                        self.mu_day = mhatday
-                    return Ahat, mhat, mhatday
+
+                    self.alpha = Ahat
+                    self.mu = mhat
+
+                    param = [Ahat, mhat]
+
+
+                    if mhat_weekend:
+                        self.mu_weekend = mhat_weekend
+                        param.append(mhat_weekend)
+                    if mhat_dayofweek:
+                        self.mu_day = mhat_dayofweek
+                        param.append(mhat_dayofweek)
+                    if mhat_hour:
+                        self.mu_hour = mhat_hour
+                        param.append(mhat_hour)
+
+                    return param
+
                 if verbose:
                     print('After ITER %d (old: %1.3f new: %1.3f)' % (k, old_LL, new_LL))
                     print(' terms %1.4f, %1.4f, %1.4f' % (term1, term2, term3))
@@ -242,57 +307,29 @@ class MPHP:
 
         self.alpha = Ahat
         self.mu = mhat
-        self.mu_day = mhatday
-        return Ahat, mhat, mhatday
+
+        param = [Ahat, mhat]
+        if mhat_weekend:
+            self.mu_weekend = mhat_weekend
+            param.append(mhat_weekend)
+        if mhat_dayofweek:
+            self.mu_day = mhat_dayofweek
+            param.append(mhat_dayofweek)  
+        if mhat_hour:
+            self.mu_hour = mhat_hour
+            param.append(mhat_hour)
+
+        return param
      
 
-    def get_ll(self, omega, ahat, mhat, mhatday, seq = [], Tm = 0):
+# VISUALIZATION METHODS
 
-        if len(seq) == 0:
-            seq = self.data
-        
-        N = len(seq)
-        day = (np.floor(seq[:, 0]) % 7).astype(int)
-        if Tm==0:
-            Tm = np.ceil(seq[-1, 0])
-        sequ = seq[:, 1].astype(int)
-        dim = mhat.shape[0]
-        
-        # diffs[i,j] = t_i - t_j for j < i (o.w. zero)
-        diffs = pairwise_distances(np.array([seq[:, 0]]).T, metric='euclidean')
-        diffs[np.triu_indices(N)] = 0
-
-        # kern[i,j] = omega*np.exp(-omega*diffs[i,j])
-        kern = omega * np.exp(-omega * diffs)
-
-        colidx = np.tile(sequ.reshape((1, N)), (N, 1))
-        rowidx = np.tile(sequ.reshape((N, 1)), (1, N))
-
-        Auu = ahat[rowidx, colidx] 
-        ag = np.multiply(Auu, kern)
-        ag[np.triu_indices(N)] = 0
-
-        # compute total rates of u_i at time i
-        rates = mhat[sequ]*mhatday[day] + np.sum(ag, axis=1)
-
-        term1 = np.sum(np.log(rates))
-        term2 = Tm * np.sum(mhat)
-        term3 = np.sum(np.sum(ahat[u, int(seq[j, 1])] for j in range(N)) for u in range(dim))
-
-        loglik = (1./N) * (term1 - term2 - term3)
-        return loglik
-
-    def get_rate(self, ct, d, seq=None):
+    def get_rate(self, ct, d):
         # return rate at time ct in dimension d
-        if not seq:
-            seq = np.array(self.data)
-        else:
-            seq = np.array(seq)
+        seq = np.array(self.data)
         if not np.all(ct > seq[:, 0]):
             seq = seq[seq[:, 0] < ct]
-
-        day = int(np.floor(ct) % 7)
-        return self.mu[d]*self.mu_day[day] + \
+        return self.mu[d] + \
             np.sum([self.alpha[d, int(j)] * self.omega * np.exp(-self.omega * (ct - t)) for t, j in seq])
 
 

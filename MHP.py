@@ -19,95 +19,104 @@ import time as T
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.utils.extmath import cartesian
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 class MHP:
-    def __init__(self, alpha=[[0.5]], mu=[0.1], omega=1.0):
+    def __init__(self, alpha=[[0.5]], mu=[0.1], omega1=5.0, omega2=5.0):
         '''params should be of form:
         alpha: numpy.array((u,u)), mu: numpy.array((,u)), omega: float'''
         
         self.data = []
-        self.alpha, self.mu, self.omega = np.array(alpha), np.array(mu), omega
+        self.alpha, self.mu, self.omega1, self.omega2  = np.array(alpha), np.array(mu), omega1, omega2
         self.dim = self.mu.shape[0]
-        self.check_stability()
+        # self.check_stability()
 
     def check_stability(self):
         ''' check stability of process (max alpha eigenvalue < 1)'''
         w,v = np.linalg.eig(self.alpha)
         me = np.amax(np.abs(w))
-        print('Max eigenvalue: %1.5f' % me)
+        # print('Max eigenvalue: %1.5f' % me)
         if me >= 1.:
             print('(WARNING) Unstable.')
 
-    def generate_seq(self, horizon):
+    def generate_seq(self, window=np.inf, N_events=np.inf, last_rates=[], seq=None):
         '''Generate a sequence based on mu, alpha, omega values. 
         Uses Ogata's thinning method, with some speedups, noted below'''
 
-        self.data = []  # clear history
+        num_events = 0
 
-        M = np.sum(self.mu)
-        s = np.random.exponential(scale=1./M)
+        if len(last_rates) == 0:
+            seq = []  # clear history
+            horizon = window
+            last_rates_given = False
 
-        # attribute (weighted random sample, since sum(mu)==M)
-        n0 = np.random.choice(np.arange(self.dim), 
-                              1, 
-                              p=(self.mu / M))
-        self.data.append([s, n0])
+            Istar = np.sum(self.mu)
+            s = np.random.exponential(scale=1./Istar)
 
-        # value of \lambda(t_k) where k is most recent event
-        # starts with just the base rate
-        lastrates = self.mu.copy()
+            # attribute (weighted random sample, since sum(mu)==Istar)
+            n0 = np.random.choice(np.arange(self.dim), 1, p=(self.mu / Istar))
+            seq.append([s, n0])
 
-        decM = False
+            # value of \lambda(t_k) where k is most recent event
+            # starts with just the base rate
+            last_rates = self.mu.copy()
+            num_events += 1
+
+        else:
+            seq = [tuple(seq)]
+            s = seq[0][0]
+            horizon = s + window
+            last_day = int(np.floor(seq[0][0]) % 7)
+            last_rates_given = True
+
         while True:
-            tj, uj = self.data[-1][0], int(self.data[-1][1])
+            tj, uj = seq[-1][0], int(seq[-1][1])
 
-            if decM:
-                # if last event was rejected, decrease M
-                M = np.sum(rates)
-                decM = False
-            else:
-                # otherwise, we just had an event, so recalc M (inclusive of last event)
-                M = np.sum(lastrates) + \
-                        self.omega * np.sum(self.alpha[:,uj])
+            Istar = np.sum(last_rates) + self.omega1 * np.sum(self.alpha[:,uj])
 
             # generate new event
-            s += np.random.exponential(scale=1./M)
+            s += np.random.exponential(scale=1./Istar)
 
             # calc rates at time s (use trick to take advantage of rates at last event)
-            rates = self.mu + np.exp(-self.omega * (s - tj)) * \
-                    (self.alpha[:,uj].flatten() * self.omega + lastrates - self.mu)
+            rates = self.mu + np.exp(-self.omega2 * (s - tj)) * \
+                    (self.alpha[:,uj].flatten() * self.omega1 + last_rates - self.mu)
 
             # attribution/rejection test
             # handle attribution and thinning in one step as weighted random sample
-            diff = M - np.sum(rates)
+            diff = Istar - np.sum(rates)
             try:
                 n0 = np.random.choice(np.arange(self.dim+1), 1, 
-                                      p=(np.append(rates, diff) / M))
+                                      p=(np.append(rates, diff) / Istar))
             except ValueError:
                 # by construction this should not happen
                 print('Probabilities do not sum to one.')
-                self.data = np.array(self.data)
-                return self.data
+                seq = np.array(seq)
+                return seq
 
             if n0 < self.dim:
-                self.data.append([s, n0])
-                # update lastrates
-                lastrates = rates.copy()
-            else:
-                decM = True
+                seq.append([s, n0])
+                # update last_rates
+                last_rates = rates.copy()
+                num_events += 1
 
             # if past horizon, done
-            if s >= horizon:
-                self.data = np.array(self.data)
-                self.data = self.data[self.data[:,0] < horizon]
-                return self.data
+            if (s >= horizon) or (num_events >= N_events):
+                if last_rates_given:
+                    seq.pop(0)
+                    
+                seq = np.array(seq)
+
+                if len(seq) > 0:
+                    seq = seq[seq[:, 0] < horizon]
+
+                seq = np.array(seq)
+                return seq
 
     #-----------
     # EM LEARNING
     #-----------
 
-    def EM(self, Ahat, mhat, omega, seq=[], smx=None, tmx=None, regularize=False, 
+    def EM(self, Ahat, mhat, omega1, omega2, seq=[], smx=None, tmx=None,
            Tm=-1, maxiter=100, epsilon=0.01, verbose=True):
         '''implements MAP EM. Optional to regularize with `smx` and `tmx` matrix (shape=(dim,dim)).
         In general, the `tmx` matrix is a pseudocount of parent events from column j,
@@ -122,6 +131,7 @@ class MHP:
         dim = mhat.shape[0]
         Tm = float(seq[-1,0]) if Tm < 0 else float(Tm)
         sequ = seq[:,1].astype(int)
+        smx = np.array(smx); tmx = np.array(tmx)
 
         p_ii = np.random.uniform(0.01, 0.99, size=N)
         p_ij = np.random.uniform(0.01, 0.99, size=(N, N))
@@ -133,7 +143,7 @@ class MHP:
         diffs[np.triu_indices(N)] = 0
 
         # kern[i,j] = omega*np.exp(-omega*diffs[i,j])
-        kern = omega*np.exp(-omega*diffs)
+        kern = omega1*np.exp(-omega2*diffs)
 
         colidx = np.tile(sequ.reshape((1,N)), (N,1))
         rowidx = np.tile(sequ.reshape((N,1)), (1,N))
@@ -179,7 +189,7 @@ class MHP:
 
             # ahat_{u,u'} = (\sum_{u_i=u}\sum_{u_j=u', j<i} p_ij) / \sum_{u_j=u'} G(T-t_j)
             # approximate with G(T-T_j) = 1
-            if regularize:
+            if len(smx) > 0:
                 Ahat = np.divide(np.fromfunction(lambda i,j: vp(i,j), (dim,dim)) + (smx-1),
                                  seqcnts + tmx)
             else:
@@ -198,11 +208,10 @@ class MHP:
                 if abs(new_LL - old_LL) <= epsilon:
                     if verbose:
                         print('Reached stopping criterion. (Old: %1.3f New: %1.3f)' % (old_LL, new_LL))
-
-                    self.Ahat = Ahat
-                    self.mhat = mhat
+            
+                    self.alpha = Ahat
+                    self.mu = mhat
                     return Ahat, mhat
-                    
                 if verbose:
                     print('After ITER %d (old: %1.3f new: %1.3f)' % (k, old_LL, new_LL))
                     print(' terms %1.4f, %1.4f, %1.4f' % (term1, term2, term3))
@@ -214,20 +223,27 @@ class MHP:
         if verbose:
             print('Reached max iter (%d).' % maxiter)
 
-        self.Ahat = Ahat
-        self.mhat = mhat
+        self.alpha = Ahat
+        self.mu = mhat
         return Ahat, mhat
 
     #-----------
     # VISUALIZATION METHODS
     #-----------
     
-    def get_rate(self, ct, d):
+    def get_rate(self, ct, d, seq=None):
         # return rate at time ct in dimension d
-        seq = np.array(self.data)
-        if not np.all(ct > seq[:,0]): seq = seq[seq[:,0] < ct]
+
+        if len(seq) == 0:
+            seq = np.array(self.data)
+        else:
+            seq = np.array(seq)
+
+        if not np.all(ct > seq[:, 0]):
+            seq = seq[seq[:, 0] < ct]
+
         return self.mu[d] + \
-            np.sum([self.alpha[d,int(j)]*self.omega*np.exp(-self.omega*(ct-t)) for t,j in seq])
+            np.sum([self.alpha[d,int(j)]*self.omega1*np.exp(-self.omega2*(ct-t)) for t,j in seq])
 
     def plot_rates(self, horizon=-1):
         # there is certainly a way to modify this function to plot when dim != 3,
@@ -285,8 +301,7 @@ class MHP:
         else:
             ax.yaxis.set_visible(False)
 
-        ax.set_xlim([0,horizon])
+        ax.set_xlim([0, horizon])
         ax.set_ylim([-self.dim, 1])
         ax.set_xlabel('Days')
         plt.tight_layout()
-
